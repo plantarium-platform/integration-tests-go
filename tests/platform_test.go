@@ -30,6 +30,12 @@ func TestMain(m *testing.M) {
 	// Run tests
 	exitCode := m.Run()
 
+	// Perform platform shutdown explicitly before exiting
+	log.Println("Exiting test suite...")
+	if err := ShutdownPlatform(platformProcess); err != nil {
+		log.Printf("Error during final platform shutdown: %v", err)
+	}
+
 	// Exit with the test results
 	os.Exit(exitCode)
 }

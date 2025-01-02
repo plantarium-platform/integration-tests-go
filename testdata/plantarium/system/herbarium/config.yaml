@@ -1,0 +1,11 @@
+plantarium:
+  root_folder: "/default/plantarium/path" # Overridable by environment variable
+  log_folder: "/var/log/plantarium"      # Centralized log folder
+
+haproxy:
+  url: "http://localhost:5555/v3/services/haproxy" # HAProxy management URL
+  login: "admin"                                   # HAProxy login
+  password: "mypassword"                           # HAProxy password
+
+security:
+  api_key: "super-secure-key"  

@@ -1,25 +1,48 @@
 package tests
 
 import (
+	"bufio"
+	"bytes"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // Constants for the test
 const (
 	herbariumRepoURL      = "https://github.com/plantarium-platform/herbarium-go"
-	testdataTempPath      = "testdata/temp"
-	testdataHerbariumPath = "testdata/plantarium"
-	buildPath             = "testdata/temp/herbarium/bin"
-	executablePath        = "testdata/temp/herbarium/bin/herbarium"
-	haproxyRunScript      = "haproxy-run.sh"
-	haproxyRunDir         = "testdata/temp/.haproxy-run"
+	testdataTempPath      = "../testdata/temp"
+	testdataHerbariumPath = "../../../testdata/plantarium"
+	buildPath             = "bin"
+	executablePath        = "bin/herbarium"
 )
 
-// InitPlatform sets up and runs the platform for testing.
+// runCommand runs a shell command and logs its command, working directory, output, and errors.
+func runCommand(cmd *exec.Cmd) error {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Log the full command and the working directory
+	if cmd.Dir != "" {
+		log.Printf("Running command: %s\nWorking directory: %s", cmd.String(), cmd.Dir)
+	} else {
+		log.Printf("Running command: %s\nWorking directory: current directory", cmd.String())
+	}
+
+	err := cmd.Run()
+	if err != nil {
+		log.Printf("Command failed: %s\nError: %v\nOutput: %s\nStderr: %s", cmd.String(), err, stdout.String(), stderr.String())
+		return err
+	}
+
+	log.Printf("Command succeeded: %s\nOutput: %s", cmd.String(), stdout.String())
+	return nil
+}
 func InitPlatform() (*os.Process, error) {
 	// Step 1: Prepare the testdata/temp directory
 	if err := os.MkdirAll(testdataTempPath, 0755); err != nil {
@@ -27,61 +50,117 @@ func InitPlatform() (*os.Process, error) {
 	}
 
 	// Step 2: Clone or update the Herbarium repository
-	repoPath := filepath.Join(testdataTempPath, "herbarium")
+	repoPath := filepath.Join(testdataTempPath, "herbarium-go")
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
 		log.Println("Cloning the Herbarium repository...")
 		cmd := exec.Command("git", "clone", herbariumRepoURL, repoPath)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := runCommand(cmd); err != nil {
 			return nil, err
 		}
 	} else {
 		log.Println("Updating the Herbarium repository...")
 		cmd := exec.Command("git", "-C", repoPath, "pull")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := runCommand(cmd); err != nil {
 			return nil, err
 		}
 	}
 
-	// Step 3: Build the Herbarium executable
+	// Step 3: Run go mod tidy
+	log.Println("Tidying Go modules...")
+	tidyCmd := exec.Command("go", "mod", "tidy")
+	tidyCmd.Dir = repoPath
+	if err := runCommand(tidyCmd); err != nil {
+		return nil, err
+	}
+
+	// Step 4: Build the Herbarium executable
 	log.Println("Building the Herbarium executable...")
 	if err := os.MkdirAll(buildPath, 0755); err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("go", "build", "-o", executablePath, filepath.Join(repoPath, "cmd", "herbarium", "main.go"))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	buildCmd := exec.Command("go", "build", "-o", "../bin/herbarium", "cmd/herbarium/main.go")
+	buildCmd.Dir = repoPath
+	if err := runCommand(buildCmd); err != nil {
 		return nil, err
 	}
+	// Step 5: Run HAProxy
+	log.Println("HAProxy starting...")
+	haproxyRunScriptPath := filepath.Join("testdata", "haproxy", "haproxy-run.sh")
+	haproxyCmd := exec.Command("bash", haproxyRunScriptPath)
 
-	// Step 4: Run the HAProxy setup script
-	log.Println("Starting HAProxy...")
-	haproxyCmd := exec.Command("bash", haproxyRunScript)
-	haproxyCmd.Dir = filepath.Join(repoPath, "resources")
-	haproxyCmd.Stdout = os.Stdout
-	haproxyCmd.Stderr = os.Stderr
-	if err := haproxyCmd.Run(); err != nil {
-		return nil, err
+	// Set working directory to the root of the project
+	haproxyCmd.Dir = "../" // Adjust relative path if needed
+
+	if err := runCommand(haproxyCmd); err != nil {
+		log.Fatalf("Failed to start HAProxy: %v", err)
 	}
+	log.Println("HAProxy started successfully.")
 
-	// Wait for HAProxy to initialize
+	// Wait for 3 seconds to ensure HAProxy is fully initialized
 	log.Println("Waiting for HAProxy to initialize...")
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
 
-	// Step 5: Start the Herbarium platform
+	// Step 6: Verify HAProxy readiness
+	haproxyAPIURL := "http://localhost:5555/v3/services/haproxy/configuration/version"
+	log.Println("Verifying HAProxy readiness...")
+	resp, err := http.Get(haproxyAPIURL)
+	if err != nil {
+		log.Fatalf("Failed to verify HAProxy readiness: %v. Please check HAProxy logs.", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		log.Fatalf("HAProxy is not ready. Received 404 Not Found from %s", haproxyAPIURL)
+	}
+
+	log.Println("HAProxy is ready.")
+
+	// Step 6: Start the Herbarium platform and monitor its output
 	log.Println("Starting the Herbarium platform...")
-	cmd = exec.Command(executablePath)
-	cmd.Env = append(os.Environ(), "PLANTARIUM_ROOT_FOLDER=testdata/plantarium") // Use test folder as the root
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	startCmd := exec.Command(executablePath)
+	startCmd.Dir = repoPath
+	startCmd.Env = append(os.Environ(), "PLANTARIUM_ROOT_FOLDER="+testdataHerbariumPath)
+
+	// Capture stdout and stderr
+	stdoutPipe, err := startCmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := startCmd.StderrPipe()
+	if err != nil {
 		return nil, err
 	}
 
+	if err := startCmd.Start(); err != nil {
+		return nil, err
+	}
+
+	ready := make(chan bool)
+
+	// Monitor stdout for readiness message
+	go func() {
+		scanner := bufio.NewScanner(stdoutPipe)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Println("[Platform stdout]", line)
+			if strings.Contains(line, "Platform started successfully") {
+				log.Println("Platform readiness confirmed.")
+				ready <- true
+			}
+		}
+	}()
+
+	// Log stderr
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Println("[Platform stderr]", line)
+		}
+	}()
+
+	// Wait for readiness confirmation
+	<-ready
 	log.Println("Platform started successfully.")
-	return cmd.Process, nil
+	return startCmd.Process, nil
 }
