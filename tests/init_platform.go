@@ -28,12 +28,7 @@ func runCommand(cmd *exec.Cmd) error {
 	cmd.Stderr = &stderr
 
 	// Log the full command and the working directory
-	if cmd.Dir != "" {
-		log.Printf("Running command: %s\nWorking directory: %s", cmd.String(), cmd.Dir)
-	} else {
-		log.Printf("Running command: %s\nWorking directory: current directory", cmd.String())
-	}
-
+	log.Printf("Running command: %s\nWorking directory: %s", cmd.String(), cmd.Dir)
 	err := cmd.Run()
 	if err != nil {
 		log.Printf("Command failed: %s\nError: %v\nOutput: %s\nStderr: %s", cmd.String(), err, stdout.String(), stderr.String())
@@ -43,6 +38,8 @@ func runCommand(cmd *exec.Cmd) error {
 	log.Printf("Command succeeded: %s\nOutput: %s", cmd.String(), stdout.String())
 	return nil
 }
+
+// InitPlatform sets up and starts the platform for integration tests.
 func InitPlatform() (*os.Process, error) {
 	// Step 1: Prepare the testdata/temp directory
 	if err := os.MkdirAll(testdataTempPath, 0755); err != nil {
@@ -65,7 +62,7 @@ func InitPlatform() (*os.Process, error) {
 		}
 	}
 
-	// Step 3: Run go mod tidy
+	// Step 3: Run go mod tidy to ensure dependencies are up to date
 	log.Println("Tidying Go modules...")
 	tidyCmd := exec.Command("go", "mod", "tidy")
 	tidyCmd.Dir = repoPath
@@ -83,13 +80,14 @@ func InitPlatform() (*os.Process, error) {
 	if err := runCommand(buildCmd); err != nil {
 		return nil, err
 	}
+
 	// Step 5: Run HAProxy
 	log.Println("HAProxy starting...")
 	haproxyRunScriptPath := filepath.Join("testdata", "haproxy", "haproxy-run.sh")
 	haproxyCmd := exec.Command("bash", haproxyRunScriptPath)
 
 	// Set working directory to the root of the project
-	haproxyCmd.Dir = "../" // Adjust relative path if needed
+	haproxyCmd.Dir = "../"
 
 	if err := runCommand(haproxyCmd); err != nil {
 		log.Fatalf("Failed to start HAProxy: %v", err)
@@ -115,7 +113,7 @@ func InitPlatform() (*os.Process, error) {
 
 	log.Println("HAProxy is ready.")
 
-	// Step 6: Start the Herbarium platform and monitor its output
+	// Step 7: Start the Herbarium platform and monitor its output
 	log.Println("Starting the Herbarium platform...")
 	startCmd := exec.Command(executablePath)
 	startCmd.Dir = repoPath
@@ -134,33 +132,37 @@ func InitPlatform() (*os.Process, error) {
 	if err := startCmd.Start(); err != nil {
 		return nil, err
 	}
-
 	ready := make(chan bool)
 
-	// Monitor stdout for readiness message
+	// Start a goroutine to monitor stdout
 	go func() {
 		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
 			line := scanner.Text()
 			log.Println("[Platform stdout]", line)
 			if strings.Contains(line, "Platform started successfully") {
-				log.Println("Platform readiness confirmed.")
-				ready <- true
+				// Notify readiness
+				select {
+				case ready <- true:
+					// Notify once, then continue monitoring
+				default:
+					// Avoid blocking if the channel has already been notified
+				}
 			}
 		}
 	}()
 
-	// Log stderr
+	// Start a goroutine to monitor stderr
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
-			line := scanner.Text()
-			log.Println("[Platform stderr]", line)
+			log.Println("[Platform stderr]", scanner.Text())
 		}
 	}()
 
-	// Wait for readiness confirmation
+	// Wait for readiness notification
 	<-ready
-	log.Println("Platform started successfully.")
+	log.Println("Platform readiness confirmed. Continuing test execution...")
+
 	return startCmd.Process, nil
 }

@@ -1,6 +1,7 @@
 name: hello-service
 url: /hello
 command: "java -jar hello-service.jar"
+minInstances: 1
 env:
   GLOBAL_VAR: "production"
 dependencies:

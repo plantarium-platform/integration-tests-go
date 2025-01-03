@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 )
 
 var platformProcess *os.Process
@@ -18,7 +19,9 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Platform initialization failed: %v", err)
 	}
 	platformProcess = process
-
+	// Wait for 3 seconds to ensure HAProxy is fully initialized
+	log.Println("Waiting for Platform to initialize...")
+	time.Sleep(5 * time.Second)
 	// Ensure platform is shut down even if tests panic or fail
 	defer func() {
 		log.Println("Tearing down platform...")
