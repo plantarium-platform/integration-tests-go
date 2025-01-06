@@ -1,24 +1,25 @@
 package tests
 
 import (
-	"bufio"
 	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
 // Constants for the test
 const (
-	herbariumRepoURL      = "https://github.com/plantarium-platform/herbarium-go"
-	testdataTempPath      = "../testdata/temp"
-	testdataHerbariumPath = "../../../testdata/plantarium"
-	buildPath             = "bin"
-	executablePath        = "bin/herbarium"
+	herbariumRepoURL    = "https://github.com/plantarium-platform/herbarium-go"
+	testdataTempPath    = "../testdata/temp"
+	plantariumRootPath  = "../testdata/plantarium"
+	herbariumBuildPath  = "../testdata/temp/bin"
+	herbariumExecutable = "../testdata/temp/bin/herbarium"
+	repoPath            = "../testdata/temp/herbarium-go"
+	haproxyScriptPath   = "../testdata/haproxy/haproxy-run.sh" // Added this line
 )
 
 // runCommand runs a shell command and logs its command, working directory, output, and errors.
@@ -39,130 +40,103 @@ func runCommand(cmd *exec.Cmd) error {
 	return nil
 }
 
-// InitPlatform sets up and starts the platform for integration tests.
-func InitPlatform() (*os.Process, error) {
-	// Step 1: Prepare the testdata/temp directory
-	if err := os.MkdirAll(testdataTempPath, 0755); err != nil {
-		return nil, err
+// PreparePlatform sets up and prepares the Herbarium platform for integration tests.
+func PreparePlatform() (*exec.Cmd, error) {
+	// Resolve absolute paths
+	absolutePlantariumRoot, err := filepath.Abs(plantariumRootPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for PLANTARIUM_ROOT_FOLDER: %w", err)
+	}
+	log.Printf("Resolved absolute path for PLANTARIUM_ROOT_FOLDER: %s", absolutePlantariumRoot)
+
+	absoluteRepoPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for repository: %w", err)
+	}
+	log.Printf("Resolved absolute path for repository: %s", absoluteRepoPath)
+
+	absoluteBuildPath, err := filepath.Abs(herbariumBuildPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for build folder: %w", err)
+	}
+	log.Printf("Resolved absolute path for build folder: %s", absoluteBuildPath)
+
+	// Step 1: Ensure temp and build directories exist
+	if err := os.MkdirAll(absoluteBuildPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create build directory: %w", err)
+	}
+	if err := os.MkdirAll(absoluteRepoPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create repository directory: %w", err)
 	}
 
-	// Step 2: Clone or update the Herbarium repository
-	repoPath := filepath.Join(testdataTempPath, "herbarium-go")
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+	// Step 2: Clone or update the repository
+	if _, err := os.Stat(absoluteRepoPath); os.IsNotExist(err) {
 		log.Println("Cloning the Herbarium repository...")
-		cmd := exec.Command("git", "clone", herbariumRepoURL, repoPath)
+		cmd := exec.Command("git", "clone", herbariumRepoURL, absoluteRepoPath)
 		if err := runCommand(cmd); err != nil {
 			return nil, err
 		}
 	} else {
 		log.Println("Updating the Herbarium repository...")
-		cmd := exec.Command("git", "-C", repoPath, "pull")
+		cmd := exec.Command("git", "-C", absoluteRepoPath, "pull")
 		if err := runCommand(cmd); err != nil {
 			return nil, err
 		}
 	}
 
-	// Step 3: Run go mod tidy to ensure dependencies are up to date
+	// Step 3: Run `go mod tidy`
 	log.Println("Tidying Go modules...")
 	tidyCmd := exec.Command("go", "mod", "tidy")
-	tidyCmd.Dir = repoPath
+	tidyCmd.Dir = absoluteRepoPath
 	if err := runCommand(tidyCmd); err != nil {
 		return nil, err
 	}
 
 	// Step 4: Build the Herbarium executable
 	log.Println("Building the Herbarium executable...")
-	if err := os.MkdirAll(buildPath, 0755); err != nil {
-		return nil, err
-	}
-	buildCmd := exec.Command("go", "build", "-o", "../bin/herbarium", "cmd/herbarium/main.go")
-	buildCmd.Dir = repoPath
+	buildCmd := exec.Command("go", "build", "-o", absoluteBuildPath+"/herbarium", "cmd/herbarium/main.go")
+	buildCmd.Dir = absoluteRepoPath
 	if err := runCommand(buildCmd); err != nil {
 		return nil, err
 	}
 
-	// Step 5: Run HAProxy
-	log.Println("HAProxy starting...")
-	haproxyRunScriptPath := filepath.Join("testdata", "haproxy", "haproxy-run.sh")
-	haproxyCmd := exec.Command("bash", haproxyRunScriptPath)
+	// Step 5: Start HAProxy
+	// Resolve the absolute path to the HAProxy script
+	haproxyRunScriptPath, err := filepath.Abs(filepath.Join("testdata", "haproxy", "haproxy-run.sh"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for HAProxy script: %w", err)
+	}
+	log.Printf("Resolved absolute path for HAProxy script: %s", haproxyRunScriptPath)
 
-	// Set working directory to the root of the project
-	haproxyCmd.Dir = "../"
+	// Prepare and run the HAProxy command
+	// Resolve the absolute path to the HAProxy script
+	absoluteHaproxyScriptPath, err := filepath.Abs(haproxyScriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for HAProxy script: %w", err)
+	}
+	log.Printf("Resolved absolute path for HAProxy script: %s", absoluteHaproxyScriptPath)
 
+	// Prepare and run the HAProxy command
+	haproxyCmd := exec.Command("bash", absoluteHaproxyScriptPath)
+	haproxyCmd.Dir = filepath.Dir(absoluteHaproxyScriptPath) // Set the working directory to the script's folder
 	if err := runCommand(haproxyCmd); err != nil {
-		log.Fatalf("Failed to start HAProxy: %v", err)
+		return nil, fmt.Errorf("failed to start HAProxy: %w", err)
 	}
 	log.Println("HAProxy started successfully.")
-
-	// Wait for 3 seconds to ensure HAProxy is fully initialized
-	log.Println("Waiting for HAProxy to initialize...")
+	// Wait for a few seconds to ensure HAProxy is fully initialized
 	time.Sleep(3 * time.Second)
-
 	// Step 6: Verify HAProxy readiness
-	haproxyAPIURL := "http://localhost:5555/v3/services/haproxy/configuration/version"
 	log.Println("Verifying HAProxy readiness...")
+	haproxyAPIURL := "http://localhost:5555/v3/services/haproxy/configuration/version"
 	resp, err := http.Get(haproxyAPIURL)
-	if err != nil {
-		log.Fatalf("Failed to verify HAProxy readiness: %v. Please check HAProxy logs.", err)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return nil, fmt.Errorf("HAProxy is not ready or unreachable. Error: %v", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		log.Fatalf("HAProxy is not ready. Received 404 Not Found from %s", haproxyAPIURL)
-	}
-
 	log.Println("HAProxy is ready.")
 
-	// Step 7: Start the Herbarium platform and monitor its output
-	log.Println("Starting the Herbarium platform...")
-	startCmd := exec.Command(executablePath)
-	startCmd.Dir = repoPath
-	startCmd.Env = append(os.Environ(), "PLANTARIUM_ROOT_FOLDER="+testdataHerbariumPath)
-
-	// Capture stdout and stderr
-	stdoutPipe, err := startCmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderrPipe, err := startCmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	if err := startCmd.Start(); err != nil {
-		return nil, err
-	}
-	ready := make(chan bool)
-
-	// Start a goroutine to monitor stdout
-	go func() {
-		scanner := bufio.NewScanner(stdoutPipe)
-		for scanner.Scan() {
-			line := scanner.Text()
-			log.Println("[Platform stdout]", line)
-			if strings.Contains(line, "Platform started successfully") {
-				// Notify readiness
-				select {
-				case ready <- true:
-					// Notify once, then continue monitoring
-				default:
-					// Avoid blocking if the channel has already been notified
-				}
-			}
-		}
-	}()
-
-	// Start a goroutine to monitor stderr
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			log.Println("[Platform stderr]", scanner.Text())
-		}
-	}()
-
-	// Wait for readiness notification
-	<-ready
-	log.Println("Platform readiness confirmed. Continuing test execution...")
-
-	return startCmd.Process, nil
+	// Step 7: Prepare the platform command
+	startCmd := exec.Command(herbariumExecutable)
+	startCmd.Env = append(os.Environ(), "PLANTARIUM_ROOT_FOLDER="+absolutePlantariumRoot)
+	return startCmd, nil
 }

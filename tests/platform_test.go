@@ -1,44 +1,80 @@
 package tests
 
 import (
+	"bufio"
+	"io"
 	"log"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
 var platformProcess *os.Process
 
-// TestMain handles setup and teardown for all tests in the package.
 func TestMain(m *testing.M) {
 	log.Println("Setting up platform for tests...")
 
-	// Initialize the platform
-	process, err := InitPlatform()
+	// Prepare the platform
+	startCmd, err := PreparePlatform()
 	if err != nil {
-		log.Fatalf("Platform initialization failed: %v", err)
+		log.Fatalf("Platform preparation failed: %v", err)
 	}
-	platformProcess = process
-	// Wait for 3 seconds to ensure HAProxy is fully initialized
-	log.Println("Waiting for Platform to initialize...")
-	time.Sleep(5 * time.Second)
-	// Ensure platform is shut down even if tests panic or fail
+
+	// Ensure platform is shut down after tests
+	var exitCode int
 	defer func() {
 		log.Println("Tearing down platform...")
-		if err := ShutdownPlatform(platformProcess); err != nil {
-			log.Printf("Error during platform shutdown: %v", err)
+		if startCmd.Process != nil {
+			if err := ShutdownPlatform(startCmd.Process); err != nil {
+				log.Printf("Error during platform shutdown: %v", err)
+			}
 		}
+		// Exit with the test result after cleanup
+		os.Exit(exitCode)
 	}()
 
-	// Run tests
-	exitCode := m.Run()
-
-	// Perform platform shutdown explicitly before exiting
-	log.Println("Exiting test suite...")
-	if err := ShutdownPlatform(platformProcess); err != nil {
-		log.Printf("Error during final platform shutdown: %v", err)
+	// Set up stderr pipe
+	stderrPipe, err := startCmd.StderrPipe()
+	if err != nil {
+		log.Fatalf("Failed to set up stderr pipe: %v", err)
 	}
 
-	// Exit with the test results
-	os.Exit(exitCode)
+	// Start the platform process
+	if err := startCmd.Start(); err != nil {
+		log.Fatalf("Failed to start the platform: %v", err)
+	}
+
+	// Start goroutines to monitor stderr
+	ready := make(chan bool)
+	go monitorPipe(stderrPipe, "[Platform stderr]", "Platform started successfully", ready)
+
+	// Wait for readiness
+	log.Println("Waiting for platform readiness...")
+	select {
+	case <-ready:
+		log.Println("Platform readiness confirmed.")
+	case <-time.After(10 * time.Second):
+		log.Fatalf("Platform readiness timeout.")
+	}
+
+	// Run tests and store the result
+	exitCode = m.Run()
+}
+
+func monitorPipe(pipe io.ReadCloser, prefix string, readySignal string, ready chan bool) {
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		log.Println(prefix, line)
+		if readySignal != "" && strings.Contains(line, readySignal) {
+			select {
+			case ready <- true:
+			default:
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("%s Error reading pipe: %v", prefix, err)
+	}
 }

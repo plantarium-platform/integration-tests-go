@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the HAProxy runtime directory
-HAPROXY_RUN_DIR="testdata/temp/.haproxy-run"
+HAPROXY_RUN_DIR="../temp/.haproxy-run"
 
 # Create the HAProxy runtime directory if it doesn't exist
 if [ ! -d "$HAPROXY_RUN_DIR" ]; then

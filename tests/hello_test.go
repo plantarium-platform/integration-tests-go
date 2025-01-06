@@ -13,7 +13,7 @@ func TestHelloEndpoint(t *testing.T) {
 	log.Println("Testing hello endpoint...")
 
 	// Step 1: Send request to the hello endpoint
-	resp, err := http.Get("http://localhost:80/hello")
+	resp, err := http.Get("http://localhost/hello")
 	assert.NoError(t, err, "Failed to reach hello endpoint")
 	defer resp.Body.Close()
 
@@ -22,7 +22,7 @@ func TestHelloEndpoint(t *testing.T) {
 
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err, "Failed to read response body")
-	assert.Equal(t, "Hello world", string(body), "Expected response 'Hello world'")
+	assert.Equal(t, "Hello, World!", string(body), "Expected response 'Hello, World!'")
 
 	log.Println("Hello endpoint test passed.")
 }
