@@ -45,7 +45,7 @@ func TestHelloGraftEndpoint(t *testing.T) {
 	log.Println("Testing hello-graft endpoint...")
 
 	backendName := "hello-graft"
-	expectedServerName := "hello-graft-service-graft-node"
+	expectedServerName := "hello-graft-service-v1.1-graftnode"
 
 	// Step 1: Fetch servers from the HAProxy backend
 	log.Printf("Fetching servers from backend: %s", backendName)
