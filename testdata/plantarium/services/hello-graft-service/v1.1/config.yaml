@@ -1,6 +1,6 @@
 name: hello-graft-service
 url: /hello-graft
-command: "java -jar hello-service.jar --server.port=8082 --base-url=/hello-graft"
+command: "java -jar hello-service.jar --server.port={{.PORT}} --base-url=/hello-graft"
 env:
   GLOBAL_VAR: "production"
 dependencies:

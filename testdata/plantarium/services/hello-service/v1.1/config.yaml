@@ -1,6 +1,6 @@
 name: hello-service
 url: /hello
-command: "java -jar hello-service.jar"
+command: "java -jar hello-service.jar --server.port={{.PORT}}"
 minInstances: 1
 env:
   GLOBAL_VAR: "production"
