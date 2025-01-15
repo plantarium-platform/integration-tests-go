@@ -1,6 +1,7 @@
 name: hello-graft-service
 url: /hello-graft
-command: "java -jar hello-service.jar --server.port={{.PORT}} --base-url=/hello-graft"
+command: "java -jar hello-service.jar -Dmicronaut.server.port={{.PORT}} --base-url=/hello-graft"
+start-message: "io.micronaut.runtime.Micronaut - Startup completed in"
 env:
   GLOBAL_VAR: "production"
 dependencies:

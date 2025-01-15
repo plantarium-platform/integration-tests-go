@@ -124,7 +124,7 @@ func PreparePlatform() (*exec.Cmd, error) {
 	}
 	log.Println("HAProxy started successfully.")
 	// Wait for a few seconds to ensure HAProxy is fully initialized
-	time.Sleep(3 * time.Second)
+	time.Sleep(10 * time.Second)
 	// Step 6: Verify HAProxy readiness
 	log.Println("Verifying HAProxy readiness...")
 	haproxyAPIURL := "http://localhost:5555/v3/services/haproxy/configuration/version"

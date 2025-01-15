@@ -1,6 +1,7 @@
 name: hello-service
 url: /hello
-command: "java -jar hello-service.jar"
+command: "java -jar hello-service.jar -Dmicronaut.server.port={{.PORT}}"
+start-message: "io.micronaut.runtime.Micronaut - Startup completed in"
 minInstances: 1
 env:
   GLOBAL_VAR: "production"
